@@ -1,10 +1,14 @@
 package lfs
 
+// #include <string.h>
 // #include <stdlib.h>
 // #include "./go_lfs.h"
 import "C"
 
 import (
+	"io"
+	"os"
+	"time"
 	"unsafe"
 
 	gopointer "github.com/mattn/go-pointer"
@@ -95,22 +99,53 @@ type Config struct {
 type LFS struct {
 	ptr unsafe.Pointer
 	lfs *C.struct_lfs
-	//cfg C.struct_lfs_config
-	//cfg C.struct_lfs_config
 	cfg *C.struct_lfs_config
 }
 
+type Info struct {
+	fileType FileType
+	size     uint32
+	name     string
+}
+
+var _ os.FileInfo = (*Info)(nil)
+
+func (info *Info) Name() string {
+	return info.name
+}
+
+func (info *Info) Size() int64 {
+	return int64(info.size)
+}
+
+func (info *Info) IsDir() bool {
+	return info.fileType == FileTypeDir
+}
+
+func (info *Info) Sys() interface{} {
+	return nil
+}
+
+func (info *Info) Mode() os.FileMode {
+	v := os.FileMode(0777)
+	if info.IsDir() {
+		v |= os.ModeDir
+	}
+	return v
+}
+
+func (info *Info) ModTime() time.Time {
+	return time.Time{}
+}
+
 func New(config Config, blockdev BlockDevice) *LFS {
-	ptr1 := C.go_lfs_new_lfs()
-	ptr2 := C.go_lfs_new_lfs_config()
 	lfs := &LFS{
+		// sizeof_* doesn't seem to work in TinyGo, so using C helper funcs instead
 		//lfs: (*C.struct_lfs)(C.malloc(C.sizeof_struct_lfs)),
 		//cfg: (*C.struct_lfs_config)(C.malloc(C.sizeof_struct_lfs_config)),
-		lfs: ptr1,
-		cfg: ptr2,
+		lfs: C.go_lfs_new_lfs(),
+		cfg: C.go_lfs_new_lfs_config(),
 	}
-	lfs.ptr = gopointer.Save(lfs) // save this to prevent GC until Close() is called?
-	//lfs.cfg = C.go_lfs_set_callbacks(
 	*lfs.cfg = C.struct_lfs_config{
 		context:        gopointer.Save(blockdev),
 		read_size:      C.lfs_size_t(config.ReadSize),
@@ -122,7 +157,7 @@ func New(config Config, blockdev BlockDevice) *LFS {
 		block_cycles:   C.int32_t(config.BlockCycles),
 	}
 	C.go_lfs_set_callbacks(lfs.cfg)
-	//)
+	lfs.ptr = gopointer.Save(lfs) // save this to prevent GC until Close() is called?
 	return lfs
 }
 
@@ -136,13 +171,6 @@ func (l *LFS) Format() error {
 
 func (l *LFS) Unmount() error {
 	return errval(C.lfs_unmount(l.lfs))
-	return nil
-}
-
-func (l *LFS) Mkdir(path string) error {
-	cs := cstring(path)
-	defer C.free(unsafe.Pointer(cs))
-	return errval(C.lfs_mkdir(l.lfs, cs))
 }
 
 func (l *LFS) Remove(path string) error {
@@ -158,6 +186,26 @@ func (l *LFS) Rename(oldPath string, newPath string) error {
 	return errval(C.lfs_rename(l.lfs, cs1, cs2))
 }
 
+func (l *LFS) Stat(path string) (*Info, error) {
+	cs := cstring(path)
+	defer C.free(unsafe.Pointer(cs))
+	info := C.struct_lfs_info{}
+	if err := errval(C.lfs_stat(l.lfs, cs, &info)); err != nil {
+		return nil, err
+	}
+	return &Info{
+		fileType: FileType(info._type),
+		size:     uint32(info.size),
+		name:     gostring(&info.name[0]),
+	}, nil
+}
+
+func (l *LFS) Mkdir(path string) error {
+	cs := cstring(path)
+	defer C.free(unsafe.Pointer(cs))
+	return errval(C.lfs_mkdir(l.lfs, cs))
+}
+
 func (l *LFS) OpenFile(path string, flags OpenFlag) (*File, error) {
 	cs := cstring(path)
 	defer C.free(unsafe.Pointer(cs))
@@ -170,17 +218,23 @@ func (l *LFS) OpenFile(path string, flags OpenFlag) (*File, error) {
 	return file, nil
 }
 
+// Finds the current size of the filesystem
+//
+// Note: Result is best effort. If files share COW structures, the returned
+// size may be larger than the filesystem actually is.
+//
+// Returns the number of allocated blocks, or a negative error code on failure.
+func (l *LFS) Size() (n int, err error) {
+	errno := C.int(C.lfs_fs_size(l.lfs))
+	if errno < 0 {
+		return 0, errval(errno)
+	}
+	return int(errno), nil
+}
+
 type File struct {
 	lfs  *LFS
 	fptr C.struct_lfs_file
-}
-
-// Synchronize a file on storage
-//
-// Any pending writes are written out to storage.
-// Returns a negative error code on failure.
-func (f *File) Sync() error {
-	return errval(C.lfs_file_sync(f.lfs.lfs, &f.fptr))
 }
 
 // Close a file
@@ -193,11 +247,69 @@ func (f *File) Close() error {
 	return errval(C.lfs_file_close(f.lfs.lfs, &f.fptr))
 }
 
+func (f *File) Read(buf []byte) (n int, err error) {
+	cbuf := C.malloc(C.ulong(len(buf)))
+	defer C.free(cbuf)
+	errno := C.int(C.lfs_file_read(f.lfs.lfs, &f.fptr, cbuf, C.lfs_size_t(len(buf))))
+	if errno > 0 {
+		copy(buf, (*[1 << 28]byte)(cbuf)[:len(buf):len(buf)])
+		return int(errno), nil
+	} else if errno == 0 {
+		// TODO: any extra checks needed here?
+		return 0, io.EOF
+	} else {
+		return 0, errval(errno)
+	}
+}
+
+// Seek changes the position of the file
+func (f *File) Seek(offset int64, whence int) (ret int64, err error) {
+	errno := C.int(C.lfs_file_seek(f.lfs.lfs, &f.fptr, C.lfs_soff_t(offset), C.int(whence)))
+	if errno < 0 {
+		return -1, errval(errno)
+	}
+	return int64(errno), nil
+}
+
+// Tell returns the position of the file
+func (f *File) Tell() (ret int64, err error) {
+	errno := C.int(C.lfs_file_tell(f.lfs.lfs, &f.fptr))
+	if errno < 0 {
+		return -1, errval(errno)
+	}
+	return int64(errno), nil
+}
+
+// Rewind changes the position of the file to the beginning of the file
+func (f *File) Rewind() (err error) {
+	return errval(C.lfs_file_rewind(f.lfs.lfs, &f.fptr))
+}
+
+// Synchronize a file on storage
+//
+// Any pending writes are written out to storage.
+// Returns a negative error code on failure.
+func (f *File) Sync() error {
+	return errval(C.lfs_file_sync(f.lfs.lfs, &f.fptr))
+}
+
 // Truncates the size of the file to the specified size
 //
 // Returns a negative error code on failure.
 func (f *File) Truncate(size uint32) error {
 	return errval(C.lfs_file_truncate(f.lfs.lfs, &f.fptr, C.lfs_off_t(size)))
+}
+
+func (f *File) Write(buf []byte) (n int, err error) {
+	cbuf := C.malloc(C.ulong(len(buf)))
+	defer C.free(cbuf)
+	copy((*[1 << 28]byte)(cbuf)[:len(buf):len(buf)], buf)
+	errno := C.lfs_file_write(f.lfs.lfs, &f.fptr, cbuf, C.lfs_size_t(len(buf)))
+	if errno > 0 {
+		return int(errno), nil
+	} else {
+		return 0, errval(C.int(errno))
+	}
 }
 
 // would be nice to use C.CString instead, but TinyGo doesn't seem to support
@@ -207,6 +319,14 @@ func cstring(s string) *C.char {
 	copy(buf, s)
 	buf[len(s)] = 0
 	return (*C.char)(ptr)
+}
+
+// would be nice to use C.GoString instead, but TinyGo doesn't seem to support
+func gostring(s *C.char) string {
+	slen := C.strlen(s)
+	sbuf := make([]byte, C.strlen(s))
+	copy(sbuf, (*[1 << 28]byte)(unsafe.Pointer(s))[:slen:slen])
+	return string(sbuf)
 }
 
 func errval(errno C.int) error {
