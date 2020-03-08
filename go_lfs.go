@@ -1,11 +1,13 @@
 package lfs
 
+// #cgo CFLAGS: -DLFS_NO_ERROR
 // #include <string.h>
 // #include <stdlib.h>
 // #include "./go_lfs.h"
 import "C"
 
 import (
+	"errors"
 	"io"
 	"os"
 	"time"
@@ -206,13 +208,24 @@ func (l *LFS) Mkdir(path string) error {
 	return errval(C.lfs_mkdir(l.lfs, cs))
 }
 
+func (l *LFS) Open(path string) (*File, error) {
+	return l.OpenFile(path, O_RDONLY)
+}
+
 func (l *LFS) OpenFile(path string, flags OpenFlag) (*File, error) {
 	cs := cstring(path)
 	defer C.free(unsafe.Pointer(cs))
-	file := &File{lfs: l}
+	file := &File{lfs: l, name: path}
 	errno := C.lfs_file_open(l.lfs, &file.fptr, cs, C.int(flags))
+	if Error(errno) == ErrIsDir {
+		file.dptr = C.go_lfs_new_lfs_dir()
+		errno = C.lfs_dir_open(l.lfs, file.dptr, cs)
+	}
 	err := errval(errno)
 	if err != nil {
+		if file.dptr != nil {
+			C.free(unsafe.Pointer(file.dptr))
+		}
 		return nil, err
 	}
 	return file, nil
@@ -235,6 +248,13 @@ func (l *LFS) Size() (n int, err error) {
 type File struct {
 	lfs  *LFS
 	fptr C.struct_lfs_file
+	dptr *C.struct_lfs_dir
+	name string
+}
+
+// Name returns the name of the file as presented to OpenFile
+func (f *File) Name() string {
+	return f.name
 }
 
 // Close a file
@@ -244,6 +264,13 @@ type File struct {
 //
 // Returns a negative error code on failure.
 func (f *File) Close() error {
+	if f.dptr != nil {
+		defer func() {
+			C.free(unsafe.Pointer(f.dptr))
+			f.dptr = nil
+		}()
+		return errval(C.lfs_dir_close(f.lfs.lfs, f.dptr))
+	}
 	return errval(C.lfs_file_close(f.lfs.lfs, &f.fptr))
 }
 
@@ -285,6 +312,15 @@ func (f *File) Rewind() (err error) {
 	return errval(C.lfs_file_rewind(f.lfs.lfs, &f.fptr))
 }
 
+// Size returns the size of the file
+func (f *File) Size() (int64, error) {
+	errno := C.int(C.lfs_file_size(f.lfs.lfs, &f.fptr))
+	if errno < 0 {
+		return -1, errval(errno)
+	}
+	return int64(errno), nil
+}
+
 // Synchronize a file on storage
 //
 // Any pending writes are written out to storage.
@@ -312,6 +348,32 @@ func (f *File) Write(buf []byte) (n int, err error) {
 	}
 }
 
+func (f *File) Readdir(n int) (infos []os.FileInfo, err error) {
+	if n > 0 {
+		return nil, errors.New("n > 0 is not supported yet")
+	}
+	for {
+		var info C.struct_lfs_info
+		i := C.lfs_dir_read(f.lfs.lfs, f.dptr, &info)
+		if i == 0 {
+			return
+		}
+		if i < 0 {
+			err = errval(C.int(i))
+			return
+		}
+		name := gostring(&info.name[0])
+		if name == "." || name == ".." {
+			continue // littlefs returns . and .., but Readdir() in Go does not
+		}
+		infos = append(infos, &Info{
+			fileType: FileType(info._type),
+			size:     uint32(info.size),
+			name:     name,
+		})
+	}
+}
+
 // would be nice to use C.CString instead, but TinyGo doesn't seem to support
 func cstring(s string) *C.char {
 	ptr := C.malloc(C.ulong(len(s) + 1))
@@ -323,8 +385,8 @@ func cstring(s string) *C.char {
 
 // would be nice to use C.GoString instead, but TinyGo doesn't seem to support
 func gostring(s *C.char) string {
-	slen := C.strlen(s)
-	sbuf := make([]byte, C.strlen(s))
+	slen := int(C.strlen(s))
+	sbuf := make([]byte, slen)
 	copy(sbuf, (*[1 << 28]byte)(unsafe.Pointer(s))[:slen:slen])
 	return string(sbuf)
 }

@@ -7,8 +7,6 @@ import (
 	lfs "github.com/bgould/go-littlefs"
 )
 
-const debug = false
-
 var config = lfs.Config{
 	ReadSize:      16,
 	ProgSize:      16,
@@ -19,20 +17,12 @@ var config = lfs.Config{
 	BlockCycles:   500,
 }
 
-var blankBlock = make([]byte, config.BlockSize)
-
-func init() {
-	for i := range blankBlock {
-		blankBlock[i] = 0xff
-	}
-}
-
 func main() {
 
 	log.Printf("LittleFS Version: %08x\n", lfs.Version)
 
 	// create/format/mount the filesystem
-	fs := lfs.New(config, newMemoryDevice())
+	fs := lfs.New(config, lfs.NewMemoryDevice(config))
 	if err := fs.Format(); err != nil {
 		log.Fatalln("Could not format", err)
 	}
@@ -111,6 +101,12 @@ func main() {
 	}
 	defer f.Close()
 
+	if size, err := f.Size(); err != nil {
+		log.Printf("Failed getting file size: %v\n", err)
+	} else {
+		log.Printf("file size: %d\n", size)
+	}
+
 	buf := make([]byte, 57)
 	for n := 0; n < 50; n++ {
 		offset, err := f.Tell()
@@ -135,4 +131,20 @@ func main() {
 	} else {
 		log.Println("Filesystem size:", size)
 	}
+
+	dir, err := fs.Open(path)
+	if err != nil {
+		log.Fatalf("Could not open directory %s: %v\n", path, err)
+	}
+	defer dir.Close()
+	infos, err := dir.Readdir(0)
+	_ = infos
+	if err != nil {
+		log.Fatalf("Could not read directory %s: %v\n", path, err)
+	}
+	for _, info := range infos {
+		log.Printf("  directory entry: %s %d %t\n", info.Name(), info.Size(), info.IsDir())
+	}
+	log.Println("done")
+	return
 }

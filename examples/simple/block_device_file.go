@@ -8,6 +8,16 @@ import (
 	"os"
 )
 
+const debug = false
+
+var blankBlock = make([]byte, config.BlockSize)
+
+func init() {
+	for i := range blankBlock {
+		blankBlock[i] = 0xff
+	}
+}
+
 func newFileDevice(path string) *FileBlockDevice {
 	file, err := os.Create(path)
 	if err != nil {

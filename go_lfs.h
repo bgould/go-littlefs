@@ -23,4 +23,6 @@ int go_lfs_c_cb_sync(const struct lfs_config *c);
 
 struct lfs* go_lfs_new_lfs(void);
 struct lfs_config* go_lfs_new_lfs_config(void);
+lfs_dir_t* go_lfs_new_lfs_dir(void);
+
 struct lfs_config* go_lfs_set_callbacks(struct lfs_config *cfg);

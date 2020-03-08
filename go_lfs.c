@@ -8,6 +8,10 @@ struct lfs_config* go_lfs_new_lfs_config() {
     return malloc(sizeof(struct lfs_config));
 }
 
+lfs_dir_t* go_lfs_new_lfs_dir() {
+    return malloc(sizeof(lfs_dir_t));
+}
+
 struct lfs_config* go_lfs_set_callbacks(struct lfs_config *cfg) {
     cfg->read  = go_lfs_c_cb_read;
     cfg->prog  = go_lfs_c_cb_prog;
