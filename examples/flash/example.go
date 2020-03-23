@@ -29,19 +29,23 @@ var (
 	blockdev lfs.BlockDevice
 	fs       *lfs.LFS
 
+	currdir = "/"
+
 	commands = map[string]cmdfunc{
-		"":       noop,
-		"dbg":    dbg,
-		"lsblk":  lsblk,
-		"mnt":    mnt,
-		"format": format,
+		"":        noop,
+		"dbg":     dbg,
+		"lsblk":   lsblk,
+		"mount":   mount,
+		"umount":  umount,
+		"format":  format,
+		"xxd":     xxd,
+		"ls":      ls,
+		"samples": samples,
+		"mkdir":   mkdir,
+		"cat":     cat,
+		"create":  create,
 		/*
-			"ls":    ls,
 			"cd":    cd,
-			"mkdir": mkdir,
-			"xxd":   xxd,
-			"fat":   fatcmd,
-			"cat":   cat,
 		*/
 	}
 )
@@ -72,7 +76,7 @@ func RunFor(dev *flash.Device) {
 	}
 
 	readyLED.Low()
-	write("SPI Configured. Reading flash info")
+	println("SPI Configured. Reading flash info")
 
 	lfsConfig := FlashLFSConfig()
 	lfsConfig.BlockCount = flashdev.Attrs().TotalSize / lfsConfig.BlockSize
@@ -152,56 +156,6 @@ func runCommand(line string) {
 	cmdfn(argv)
 }
 
-/*
-func fatcmd(argv []string) {
-
-	//var err error
-
-	if len(argv) < 3 || argv[1] != "show" || (argv[2] != "bs" && argv[2] != "fs") {
-		println("usage: fat show <bs|fs>")
-		return
-	}
-
-	if fatboot == nil {
-		println("FAT boot sector was not loaded correctly.")
-		return
-	}
-
-	if argv[2] == "bs" {
-		fmt.Printf(
-			"\n-------------------------------------\r\n"+
-				" FAT boot sector:  \r\n"+
-				"-------------------------------------\r\n"+
-				" OEM Name:              %v\r\n"+
-				" Bytes per Sector:      %v\r\n"+
-				" Sectors Per Cluster:   %v\r\n"+
-				" Reserved Sector Count: %v\r\n"+
-				" Num FATs:              %v\r\n"+
-				" Root Entry Count:      %v\r\n"+
-				" Total Sectors:         %v\r\n"+
-				" Media:                 %v\r\n"+
-				" Sectors Per FAT:       %v\r\n"+
-				" Sectors Per Track:     %v\r\n"+
-				" Num Heads:             %v\r\n"+
-				"-------------------------------------\r\n\r\n",
-			fatboot.OEMName,
-			fatboot.BytesPerSector,
-			fatboot.SectorsPerCluster,
-			fatboot.ReservedSectorCount,
-			fatboot.NumFATs,
-			fatboot.RootEntryCount,
-			fatboot.TotalSectors,
-			fatboot.Media,
-			fatboot.SectorsPerFat,
-			fatboot.SectorsPerTrack,
-			fatboot.NumHeads,
-		)
-		return
-	}
-
-}
-*/
-
 func noop(argv []string) {}
 
 func dbg(argv []string) {
@@ -250,7 +204,7 @@ func lsblk(argv []string) {
 	)
 }
 
-func mnt(argv []string) {
+func mount(argv []string) {
 	if err := fs.Mount(); err != nil {
 		println("Could not mount LittleFS filesystem: " + err.Error() + "\r\n")
 	} else {
@@ -297,17 +251,98 @@ func umount(argv []string) {
 	}
 */
 
-/*
 func ls(argv []string) {
-	if fatfs == nil || rootdir == nil {
-		mnt(nil)
+	path := "/"
+	if len(argv) > 1 {
+		path = strings.TrimSpace(argv[1])
 	}
-	for _, direntry := range currdir.Entries() {
-		fmt.Printf("entry: %s\r\n", direntry.Name())
+	dir, err := fs.Open(path)
+	if err != nil {
+		fmt.Printf("Could not open directory %s: %v\n", path, err)
+		return
+	}
+	defer dir.Close()
+	infos, err := dir.Readdir(0)
+	_ = infos
+	if err != nil {
+		fmt.Printf("Could not read directory %s: %v\n", path, err)
+		return
+	}
+	for _, info := range infos {
+		s := "-rwxrwxrwx"
+		if info.IsDir() {
+			s = "drwxrwxrwx"
+		}
+		fmt.Printf("%s %5d %s\n", s, info.Size(), info.Name())
 	}
 }
 
+func mkdir(argv []string) {
+	tgt := ""
+	if len(argv) == 2 {
+		tgt = strings.TrimSpace(argv[1])
+	}
+	if debug {
+		println("Trying mkdir to " + tgt)
+	}
+	if tgt == "" {
+		println("Usage: mkdir <target dir>")
+		return
+	}
+	err := fs.Mkdir(tgt)
+	if err != nil {
+		println("Could not mkdir " + tgt + ": " + err.Error())
+	}
+}
+
+func samples(argv []string) {
+	for i := 0; i < 10; i++ {
+		name := fmt.Sprintf("file%d.txt", i)
+		if bytes, err := createSampleFile(name); err != nil {
+			fmt.Printf("%s\r\n", err)
+			return
+		} else {
+			fmt.Printf("wrote %d bytes to %s\r\n", bytes, name)
+		}
+	}
+}
+
+func create(argv []string) {
+	tgt := ""
+	if len(argv) == 2 {
+		tgt = strings.TrimSpace(argv[1])
+	}
+	if debug {
+		println("Trying create to " + tgt)
+	}
+	if bytes, err := createSampleFile(tgt); err != nil {
+		fmt.Printf("%s\r\n", err)
+		return
+	} else {
+		fmt.Printf("wrote %d bytes to %s\r\n", bytes, tgt)
+	}
+}
+
+func createSampleFile(name string) (int, error) {
+	buf := make([]byte, 90)
+	for j := uint8(0); j < uint8(len(buf)); j++ {
+		buf[j] = 0x20 + j
+	}
+	f, err := fs.OpenFile(name, lfs.O_CREAT|lfs.O_WRONLY|lfs.O_TRUNC)
+	if err != nil {
+		return 0, fmt.Errorf("error opening %s: %s", name, err.Error())
+	}
+	defer f.Close()
+	bytes, err := f.Write(buf)
+	if err != nil {
+		return 0, fmt.Errorf("error writing %s: %s", name, err.Error())
+	}
+	return bytes, nil
+}
+
+/*
 func cd(argv []string) {
+
 	if fatfs == nil || rootdir == nil {
 		mnt(nil)
 	}
@@ -347,18 +382,9 @@ func cd(argv []string) {
 	}
 	currdir = cd
 }
-
-func mkdir(argv []string) {
-	if fatfs == nil || rootdir == nil {
-		mnt(nil)
-	}
-	println("mkdir not implemented yet")
-}
+*/
 
 func cat(argv []string) {
-	if fatfs == nil || rootdir == nil {
-		mnt(nil)
-	}
 	tgt := ""
 	if len(argv) == 2 {
 		tgt = strings.TrimSpace(argv[1])
@@ -373,23 +399,16 @@ func cat(argv []string) {
 	if debug {
 		println("Getting entry")
 	}
-	entry := currdir.Entry(tgt)
-	if entry == nil {
-		println("File not found: " + tgt)
+	f, err := fs.Open(tgt)
+	if err != nil {
+		println("Could not open: " + err.Error())
 		return
 	}
-	if entry.IsDir() {
+	defer f.Close()
+	if f.IsDir() {
 		println("Not a file: " + tgt)
 		return
 	}
-	if debug {
-		println("Getting file")
-	}
-	f, err := entry.File()
-	if err != nil {
-		println("Could not get file " + tgt + ": " + err.Error())
-	}
-
 	off := 0x0
 	buf := make([]byte, 64)
 	for {
@@ -404,7 +423,6 @@ func cat(argv []string) {
 		off += n
 	}
 }
-*/
 
 func xxd(argv []string) {
 	var err error
@@ -440,6 +458,8 @@ func xxd(argv []string) {
 		return
 	}
 	buf := store[0:size]
+	bsz := uint64(flash.BlockSize)
+	blockdev.ReadBlock(uint32(addr/bsz), uint32(addr%bsz), buf)
 	//fatdisk.ReadAt(buf, int64(addr))
 	xxdfprint(os.Stdout, uint32(addr), buf)
 }
@@ -468,73 +488,6 @@ func xxdfprint(w io.Writer, offset uint32, b []byte) {
 		println()
 		//	"%s\r\n", b[i:l], "")
 	}
-}
-
-/*
-	switch cmd {
-	case "":
-		// no-op
-	case "dbg":
-		if debug {
-			debug = false
-			println("Console debugging off")
-		} else {
-			debug = true
-			println("Console debugging on")
-		}
-	case "lsblk":
-		status, _ := dev1.ReadStatus()
-		serialNumber1, _ := dev1.ReadSerialNumber()
-		fmt.Printf(
-			"Device Information:\r\n"+
-				"---------------------\r\n"+
-				"JEDEC ID: %v\r\n"+
-				"SN: %v\r\n"+
-				"\r\nstatus: %2x\r\n",
-			dev1.ID,
-			serialNumber1,
-			status,
-		)
-	case "head":
-		buf := store[0:29]
-		fatdisk.ReadAt(buf, 0)
-		xxd(0, buf)
-		//fmt.Printf("% 4x\r\n", buf)
-	case "ls":
-			for _, direntry := range pwd.Entries() {
-				log.Printf("entry: %+v\r\n", direntry.Name())
-			}
-	case "cd":
-		if len(parts) < 2 {
-			println("Usage: cd <directory name>")
-			break
-		}
-			dirname := parts[1]
-			entry := rootDir.Entry(dirname)
-			if !entry.IsDir() {
-				println(dirname + " is not a directory")
-				continue
-			}
-			curdir, err = entry.Dir()
-			if err != nil {
-				println("Could not open directory " + dirname + ": " + err.Error())
-			}
-	case "mkdir":
-		if len(parts) < 2 {
-			println("Usage: cd <directory name>")
-			break
-		}
-			dirname := parts[1]
-			entry := rootDir.Entry(dirname)
-			println(entry)
-	default:
-		println("unknown command: " + line)
-	}
-
-*/
-
-func write(s string) {
-	println(s)
 }
 
 func prompt() {

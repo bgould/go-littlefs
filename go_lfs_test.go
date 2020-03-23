@@ -1,8 +1,8 @@
 package lfs
 
 import (
-	"crypto/rand"
 	"io"
+	"math/rand"
 	"testing"
 )
 

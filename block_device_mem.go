@@ -1,7 +1,7 @@
 package lfs
 
 import (
-	"log"
+	"fmt"
 )
 
 // MemBlockDevice is a block device implementation backed by a byte slice
@@ -22,7 +22,7 @@ func NewMemoryDevice(config Config) *MemBlockDevice {
 	}
 	for i := uint32(0); i < config.BlockCount; i++ {
 		if err := dev.EraseBlock(i); err != nil {
-			log.Fatalf("could not initialize block %d: %s", i, err.Error())
+			panic(fmt.Sprintf("could not initialize block %d: %s", i, err.Error()))
 		}
 	}
 	return dev
