@@ -28,12 +28,12 @@
 #ifndef LFS_NO_MALLOC
 #include <stdlib.h>
 #endif
-#ifndef LFS_NO_ASSERT
+#ifdef LFS_YES_ASSERT
 #include <assert.h>
 #endif
-#if !defined(LFS_NO_DEBUG) || \
-        !defined(LFS_NO_WARN) || \
-        !defined(LFS_NO_ERROR) || \
+#if defined(LFS_YES_DEBUG) || \
+        defined(LFS_YES_WARN) || \
+        defined(LFS_YES_ERROR) || \
         defined(LFS_YES_TRACE)
 #include <stdio.h>
 #endif
@@ -56,21 +56,21 @@ extern "C"
 #define LFS_TRACE(fmt, ...)
 #endif
 
-#ifndef LFS_NO_DEBUG
+#ifdef LFS_YES_DEBUG
 #define LFS_DEBUG(fmt, ...) \
     printf("lfs_debug:%d: " fmt "\n", __LINE__, __VA_ARGS__)
 #else
 #define LFS_DEBUG(fmt, ...)
 #endif
 
-#ifndef LFS_NO_WARN
+#ifdef LFS_YES_WARN
 #define LFS_WARN(fmt, ...) \
     printf("lfs_warn:%d: " fmt "\n", __LINE__, __VA_ARGS__)
 #else
 #define LFS_WARN(fmt, ...)
 #endif
 
-#ifndef LFS_NO_ERROR
+#ifdef LFS_YES_ERROR
 #define LFS_ERROR(fmt, ...) \
     printf("lfs_error:%d: " fmt "\n", __LINE__, __VA_ARGS__)
 #else
@@ -78,7 +78,7 @@ extern "C"
 #endif
 
 // Runtime assertions
-#ifndef LFS_NO_ASSERT
+#ifdef LFS_YES_ASSERT
 #define LFS_ASSERT(test) assert(test)
 #else
 #define LFS_ASSERT(test)
