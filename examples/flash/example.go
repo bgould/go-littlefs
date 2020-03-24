@@ -44,9 +44,8 @@ var (
 		"mkdir":   mkdir,
 		"cat":     cat,
 		"create":  create,
-		/*
-			"cd":    cd,
-		*/
+		"write":   write,
+		"rm":      rm,
 	}
 )
 
@@ -110,6 +109,12 @@ func RunFor(dev *flash.Device) {
 					}
 				case 13:
 					// return key
+					if console.Buffered() > 0 {
+						data, _ := console.ReadByte()
+						if data != 10 {
+							println("\r\nunexpected: \r", int(data))
+						}
+					}
 					console.Write([]byte("\r\n"))
 					runCommand(string(input[:i]))
 					prompt()
@@ -140,7 +145,6 @@ func RunFor(dev *flash.Device) {
 				// TODO: handle escape sequences
 				state = StateInput
 			}
-			//time.Sleep(10 * time.Millisecond)
 		}
 	}
 }
@@ -295,6 +299,24 @@ func mkdir(argv []string) {
 	}
 }
 
+func rm(argv []string) {
+	tgt := ""
+	if len(argv) == 2 {
+		tgt = strings.TrimSpace(argv[1])
+	}
+	if debug {
+		println("Trying rm to " + tgt)
+	}
+	if tgt == "" {
+		println("Usage: rm <target dir>")
+		return
+	}
+	err := fs.Remove(tgt)
+	if err != nil {
+		println("Could not rm " + tgt + ": " + err.Error())
+	}
+}
+
 func samples(argv []string) {
 	for i := 0; i < 10; i++ {
 		name := fmt.Sprintf("file%d.txt", i)
@@ -320,6 +342,45 @@ func create(argv []string) {
 		return
 	} else {
 		fmt.Printf("wrote %d bytes to %s\r\n", bytes, tgt)
+	}
+}
+
+func write(argv []string) {
+	tgt := ""
+	if len(argv) == 2 {
+		tgt = strings.TrimSpace(argv[1])
+	}
+	if debug {
+		println("Trying receive to " + tgt)
+	}
+	buf := make([]byte, 1)
+	f, err := fs.OpenFile(tgt, lfs.O_CREAT|lfs.O_WRONLY|lfs.O_TRUNC)
+	if err != nil {
+		fmt.Printf("error opening %s: %s\r\n", tgt, err.Error())
+		return
+	}
+	defer f.Close()
+	var n int
+	for {
+		if console.Buffered() > 0 {
+			data, _ := console.ReadByte()
+			switch data {
+			case 0x04:
+				fmt.Printf("wrote %d bytes to %s\r\n", n, tgt)
+				return
+			default:
+				// anything else, just echo the character if it is printable
+				if strconv.IsPrint(rune(data)) {
+					console.WriteByte(data)
+				}
+				buf[0] = data
+				if _, err := f.Write(buf); err != nil {
+					fmt.Printf("\nerror writing: %s\r\n", err)
+					return
+				}
+				n++
+			}
+		}
 	}
 }
 
@@ -486,7 +547,6 @@ func xxdfprint(w io.Writer, offset uint32, b []byte) {
 		}
 		console.Write(buf16)
 		println()
-		//	"%s\r\n", b[i:l], "")
 	}
 }
 
