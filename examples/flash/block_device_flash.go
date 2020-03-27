@@ -12,10 +12,10 @@ func FlashLFSConfig() lfs.Config {
 	return lfs.Config{
 		ReadSize:      flash.PageSize,
 		ProgSize:      flash.PageSize,
-		BlockSize:     flash.BlockSize,
+		BlockSize:     flash.SectorSize,
 		BlockCount:    0,
-		CacheSize:     512,
-		LookaheadSize: 512,
+		CacheSize:     flash.PageSize,
+		LookaheadSize: flash.PageSize,
 		BlockCycles:   100,
 	}
 }
@@ -35,7 +35,7 @@ func (bd *FlashBlockDevice) ReadBlock(block uint32, offset uint32, buf []byte) e
 	if debug {
 		fmt.Printf("lfs: ReadBlock(): %v, %v, %v\n", block, offset, len(buf))
 	}
-	err := bd.dev.ReadBuffer(bd.cfg.BlockSize*block+offset, buf)
+	_, err := bd.dev.ReadAt(buf, int64(bd.cfg.BlockSize*block+offset))
 	return err
 }
 
@@ -43,7 +43,7 @@ func (bd *FlashBlockDevice) ProgramBlock(block uint32, offset uint32, buf []byte
 	if debug {
 		fmt.Printf("lfs: ProgramBlock(): %v, %v, %v\n", block, offset, len(buf))
 	}
-	_, err := bd.dev.WriteBuffer(bd.cfg.BlockSize*block+offset, buf)
+	_, err := bd.dev.WriteAt(buf, int64(bd.cfg.BlockSize*block+offset))
 	return err
 }
 
@@ -51,8 +51,7 @@ func (bd *FlashBlockDevice) EraseBlock(block uint32) error {
 	if debug {
 		fmt.Printf("lfs: EraseBlock(): %v\n", block)
 	}
-	bd.dev.EraseBlock(block)
-	err := bd.dev.EraseBlock(block)
+	err := bd.dev.EraseSector(block)
 	return err
 }
 

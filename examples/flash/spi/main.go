@@ -3,13 +3,13 @@ package main
 import (
 	"machine"
 
-	fatfs_example "github.com/bgould/sandbox/flash-fatfs"
+	example "github.com/bgould/go-littlefs/examples/flash"
 
 	"tinygo.org/x/drivers/flash"
 )
 
 func main() {
-	fatfs_example.RunFor(
+	example.RunFor(
 		flash.NewSPI(
 			&machine.SPI1,
 			machine.SPI1_MOSI_PIN,

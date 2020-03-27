@@ -181,8 +181,8 @@ func lsblk(argv []string) {
 		"\n-------------------------------------\r\n"+
 			" Device Information:  \r\n"+
 			"-------------------------------------\r\n"+
-			" JEDEC ID: %v\r\n"+
-			" Serial:   %v\r\n"+
+			" JEDEC ID: %6X\r\n"+
+			" Serial:   %08X\r\n"+
 			" Status 1: %02x\r\n"+
 			" Status 2: %02x\r\n"+
 			" \r\n"+
@@ -194,7 +194,7 @@ func lsblk(argv []string) {
 			" Write Status Split:    %t\r\n"+
 			" Single Status Byte:    %t\r\n"+
 			"-------------------------------------\r\n\r\n",
-		attrs.JedecID,
+		attrs.JedecID.Uint32(),
 		serialNumber1,
 		status1,
 		status2,
@@ -318,9 +318,10 @@ func rm(argv []string) {
 }
 
 func samples(argv []string) {
+	buf := make([]byte, 90)
 	for i := 0; i < 10; i++ {
 		name := fmt.Sprintf("file%d.txt", i)
-		if bytes, err := createSampleFile(name); err != nil {
+		if bytes, err := createSampleFile(name, buf); err != nil {
 			fmt.Printf("%s\r\n", err)
 			return
 		} else {
@@ -337,7 +338,8 @@ func create(argv []string) {
 	if debug {
 		println("Trying create to " + tgt)
 	}
-	if bytes, err := createSampleFile(tgt); err != nil {
+	buf := make([]byte, 90)
+	if bytes, err := createSampleFile(tgt, buf); err != nil {
 		fmt.Printf("%s\r\n", err)
 		return
 	} else {
@@ -384,8 +386,7 @@ func write(argv []string) {
 	}
 }
 
-func createSampleFile(name string) (int, error) {
-	buf := make([]byte, 90)
+func createSampleFile(name string, buf []byte) (int, error) {
 	for j := uint8(0); j < uint8(len(buf)); j++ {
 		buf[j] = 0x20 + j
 	}
@@ -519,7 +520,7 @@ func xxd(argv []string) {
 		return
 	}
 	buf := store[0:size]
-	bsz := uint64(flash.BlockSize)
+	bsz := uint64(flash.SectorSize)
 	blockdev.ReadBlock(uint32(addr/bsz), uint32(addr%bsz), buf)
 	//fatdisk.ReadAt(buf, int64(addr))
 	xxdfprint(os.Stdout, uint32(addr), buf)
