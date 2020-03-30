@@ -21,8 +21,12 @@ int go_lfs_c_cb_prog(const struct lfs_config *c, lfs_block_t block, lfs_off_t of
 int go_lfs_c_cb_erase(const struct lfs_config *c, lfs_block_t block);
 int go_lfs_c_cb_sync(const struct lfs_config *c);
 
+// Helper functions used to allocate new LFS objects, needed because TinyGo
+// does not support sizeof() yet
 struct lfs* go_lfs_new_lfs(void);
 struct lfs_config* go_lfs_new_lfs_config(void);
 lfs_dir_t* go_lfs_new_lfs_dir(void);
 
+// Helper function to set the function pointers to the global callbacks on a
+// provided LFS config struct
 struct lfs_config* go_lfs_set_callbacks(struct lfs_config *cfg);

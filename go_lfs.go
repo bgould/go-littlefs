@@ -1,6 +1,5 @@
 package lfs
 
-// #cgo CFLAGS:
 // #include <string.h>
 // #include <stdlib.h>
 // #include "./go_lfs.h"
@@ -275,7 +274,7 @@ func (f *File) Close() error {
 }
 
 func (f *File) Read(buf []byte) (n int, err error) {
-	cbuf := C.malloc(C.uint(len(buf)))
+	cbuf := C.malloc(C.size_t(len(buf)))
 	defer C.free(cbuf)
 	errno := C.int(C.lfs_file_read(f.lfs.lfs, &f.fptr, cbuf, C.lfs_size_t(len(buf))))
 	if errno > 0 {
@@ -337,7 +336,7 @@ func (f *File) Truncate(size uint32) error {
 }
 
 func (f *File) Write(buf []byte) (n int, err error) {
-	cbuf := C.malloc(C.uint(len(buf)))
+	cbuf := C.malloc(C.size_t(len(buf)))
 	defer C.free(cbuf)
 	copy((*[1 << 28]byte)(cbuf)[:len(buf):len(buf)], buf)
 	errno := C.lfs_file_write(f.lfs.lfs, &f.fptr, cbuf, C.lfs_size_t(len(buf)))
@@ -383,7 +382,7 @@ func (f *File) Readdir(n int) (infos []os.FileInfo, err error) {
 
 // would be nice to use C.CString instead, but TinyGo doesn't seem to support
 func cstring(s string) *C.char {
-	ptr := C.malloc(C.uint(len(s) + 1))
+	ptr := C.malloc(C.size_t(len(s) + 1))
 	buf := (*[1 << 28]byte)(ptr)[: len(s)+1 : len(s)+1]
 	copy(buf, s)
 	buf[len(s)] = 0

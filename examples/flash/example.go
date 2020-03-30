@@ -319,7 +319,7 @@ func rm(argv []string) {
 
 func samples(argv []string) {
 	buf := make([]byte, 90)
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 5; i++ {
 		name := fmt.Sprintf("file%d.txt", i)
 		if bytes, err := createSampleFile(name, buf); err != nil {
 			fmt.Printf("%s\r\n", err)
