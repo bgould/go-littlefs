@@ -18,17 +18,6 @@ import (
 const (
 	Version = C.LFS_VERSION
 
-	FileTypeReg FileType = C.LFS_TYPE_REG
-	FileTypeDir FileType = C.LFS_TYPE_DIR
-
-	O_RDONLY OpenFlag = C.LFS_O_RDONLY // Open a file as read only
-	O_WRONLY OpenFlag = C.LFS_O_WRONLY // Open a file as write only
-	O_RDWR   OpenFlag = C.LFS_O_RDWR   // Open a file as read and write
-	O_CREAT  OpenFlag = C.LFS_O_CREAT  // Create a file if it does not exist
-	O_EXCL   OpenFlag = C.LFS_O_EXCL   // Fail if a file already exists
-	O_TRUNC  OpenFlag = C.LFS_O_TRUNC  // Truncate the existing file to zero size
-	O_APPEND OpenFlag = C.LFS_O_APPEND // Move to end of file on every write
-
 	ErrOK                 = C.LFS_ERR_OK          // No error
 	ErrIO           Error = C.LFS_ERR_IO          // Error during device operation
 	ErrCorrupt      Error = C.LFS_ERR_CORRUPT     // Corrupted
@@ -44,11 +33,38 @@ const (
 	ErrNoMemory     Error = C.LFS_ERR_NOMEM       // No more memory available
 	ErrNoAttr       Error = C.LFS_ERR_NOATTR      // No data/attr available
 	ErrNameTooLong  Error = C.LFS_ERR_NAMETOOLONG // File name too long
+
+	fileTypeReg fileType = C.LFS_TYPE_REG
+	fileTypeDir fileType = C.LFS_TYPE_DIR
 )
 
-type OpenFlag int
+func translateFlags(osFlags int) C.int {
+	var result C.int
+	if osFlags&os.O_RDONLY > 0 {
+		result |= C.LFS_O_RDONLY
+	}
+	if osFlags&os.O_WRONLY > 0 {
+		result |= C.LFS_O_WRONLY
+	}
+	if osFlags&os.O_RDWR > 0 {
+		result |= C.LFS_O_RDWR
+	}
+	if osFlags&os.O_CREATE > 0 {
+		result |= C.LFS_O_CREAT
+	}
+	if osFlags&os.O_EXCL > 0 {
+		result |= C.LFS_O_EXCL
+	}
+	if osFlags&os.O_TRUNC > 0 {
+		result |= C.LFS_O_TRUNC
+	}
+	if osFlags&os.O_APPEND > 0 {
+		result |= C.LFS_O_APPEND
+	}
+	return result
+}
 
-type FileType uint
+type fileType uint
 
 type Error int
 
@@ -104,12 +120,10 @@ type LFS struct {
 }
 
 type Info struct {
-	fileType FileType
-	size     uint32
-	name     string
+	ftyp fileType
+	size uint32
+	name string
 }
-
-var _ os.FileInfo = (*Info)(nil)
 
 func (info *Info) Name() string {
 	return info.name
@@ -120,7 +134,7 @@ func (info *Info) Size() int64 {
 }
 
 func (info *Info) IsDir() bool {
-	return info.fileType == FileTypeDir
+	return info.ftyp == fileTypeDir
 }
 
 func (info *Info) Sys() interface{} {
@@ -141,9 +155,6 @@ func (info *Info) ModTime() time.Time {
 
 func New(config Config, blockdev BlockDevice) *LFS {
 	lfs := &LFS{
-		// sizeof_* doesn't seem to work in TinyGo, so using C helper funcs instead
-		//lfs: (*C.struct_lfs)(C.malloc(C.sizeof_struct_lfs)),
-		//cfg: (*C.struct_lfs_config)(C.malloc(C.sizeof_struct_lfs_config)),
 		lfs: C.go_lfs_new_lfs(),
 		cfg: C.go_lfs_new_lfs_config(),
 	}
@@ -195,9 +206,9 @@ func (l *LFS) Stat(path string) (*Info, error) {
 		return nil, err
 	}
 	return &Info{
-		fileType: FileType(info._type),
-		size:     uint32(info.size),
-		name:     gostring(&info.name[0]),
+		ftyp: fileType(info._type),
+		size: uint32(info.size),
+		name: gostring(&info.name[0]),
 	}, nil
 }
 
@@ -208,30 +219,30 @@ func (l *LFS) Mkdir(path string) error {
 }
 
 func (l *LFS) Open(path string) (*File, error) {
-	return l.OpenFile(path, O_RDONLY)
+	return l.OpenFile(path, os.O_RDONLY)
 }
 
-func (l *LFS) OpenFile(path string, flags OpenFlag) (*File, error) {
+func (l *LFS) OpenFile(path string, flags int) (*File, error) {
 
 	cs := cstring(path)
 	defer C.free(unsafe.Pointer(cs))
 	file := &File{lfs: l, name: path}
 
-	var fileType FileType
+	var ftype fileType
 	info := C.struct_lfs_info{}
 	if err := errval(C.lfs_stat(l.lfs, cs, &info)); err == nil {
-		fileType = FileType(info._type)
+		ftype = fileType(info._type)
 	}
 
 	var errno C.int
-	if fileType == FileTypeDir {
-		file.typ = FileTypeDir
+	if ftype == fileTypeDir {
+		file.typ = fileTypeDir
 		file.hndl = unsafe.Pointer(C.go_lfs_new_lfs_dir())
 		errno = C.lfs_dir_open(l.lfs, file.dirptr(), cs)
 	} else {
-		file.typ = FileTypeReg
+		file.typ = fileTypeReg
 		file.hndl = unsafe.Pointer(C.go_lfs_new_lfs_file())
-		errno = C.lfs_file_open(l.lfs, file.fileptr(), cs, C.int(flags))
+		errno = C.lfs_file_open(l.lfs, file.fileptr(), cs, C.int(translateFlags(flags)))
 	}
 
 	if err := errval(errno); err != nil {
@@ -245,7 +256,7 @@ func (l *LFS) OpenFile(path string, flags OpenFlag) (*File, error) {
 	return file, nil
 }
 
-// Finds the current size of the filesystem
+// Size finds the current size of the filesystem
 //
 // Note: Result is best effort. If files share COW structures, the returned
 // size may be larger than the filesystem actually is.
@@ -261,7 +272,7 @@ func (l *LFS) Size() (n int, err error) {
 
 type File struct {
 	lfs  *LFS
-	typ  FileType
+	typ  fileType
 	hndl unsafe.Pointer
 	//fptr C.struct_lfs_file
 	//dptr *C.struct_lfs_dir
@@ -289,9 +300,9 @@ func (f *File) Close() error {
 			f.hndl = nil
 		}()
 		switch f.typ {
-		case FileTypeReg:
+		case fileTypeReg:
 			return errval(C.lfs_file_close(f.lfs.lfs, f.fileptr()))
-		case FileTypeDir:
+		case fileTypeDir:
 			return errval(C.lfs_dir_close(f.lfs.lfs, f.dirptr()))
 		default:
 			panic("lfs: unknown typ for file handle")
@@ -371,7 +382,7 @@ func (f *File) Write(buf []byte) (n int, err error) {
 }
 
 func (f *File) IsDir() bool {
-	return f.typ == FileTypeDir
+	return f.typ == fileTypeDir
 }
 
 func (f *File) Readdir(n int) (infos []os.FileInfo, err error) {
@@ -396,9 +407,9 @@ func (f *File) Readdir(n int) (infos []os.FileInfo, err error) {
 			continue // littlefs returns . and .., but Readdir() in Go does not
 		}
 		infos = append(infos, &Info{
-			fileType: FileType(info._type),
-			size:     uint32(info.size),
-			name:     name,
+			ftyp: fileType(info._type),
+			size: uint32(info.size),
+			name: name,
 		})
 	}
 }
@@ -425,11 +436,4 @@ func errval(errno C.int) error {
 		return Error(errno)
 	}
 	return nil
-}
-
-type BlockDevice interface {
-	ReadBlock(block uint32, offset uint32, buf []byte) error
-	ProgramBlock(block uint32, offset uint32, buf []byte) error
-	EraseBlock(block uint32) error
-	Sync() error
 }

@@ -3,6 +3,7 @@ package lfs
 import (
 	"io"
 	"math/rand"
+	"os"
 	"testing"
 )
 
@@ -106,7 +107,7 @@ func TestFiles(t *testing.T) {
 	)
 
 	t.Run("SimpleFileTest", func(t *testing.T) {
-		f, err := fs.OpenFile("hello", O_WRONLY|O_CREAT)
+		f, err := fs.OpenFile("hello", os.O_WRONLY|os.O_CREATE)
 		if err != nil {
 			t.Error(err)
 		}
@@ -178,7 +179,7 @@ func TestDirectories(t *testing.T) {
 	})
 
 	t.Run("FileCreation", func(t *testing.T) {
-		f, err := fs.OpenFile("burrito", O_CREAT|O_WRONLY)
+		f, err := fs.OpenFile("burrito", os.O_CREATE|os.O_WRONLY)
 		check(t, err)
 		check(t, f.Close())
 	})
@@ -257,7 +258,7 @@ func createTestFS(t *testing.T, config Config) (*LFS, BlockDevice, func()) {
 
 func writeFileTest(t *testing.T, lfs *LFS, size int, name string) {
 	buf := make([]byte, 32)
-	f, err := lfs.OpenFile(name, O_CREAT|O_WRONLY|O_TRUNC)
+	f, err := lfs.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +295,7 @@ func readFileTest(t *testing.T, lfs *LFS, size int, name string) {
 		t.Fatalf("expected file, but was a directory")
 	}
 	buf := make([]byte, 32)
-	f, err := lfs.OpenFile(name, O_RDONLY)
+	f, err := lfs.OpenFile(name, os.O_RDONLY)
 	if err != nil {
 		t.Fatal(err)
 	}
