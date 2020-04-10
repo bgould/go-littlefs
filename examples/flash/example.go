@@ -16,6 +16,9 @@ import (
 const consoleBufLen = 64
 const storageBufLen = 512
 
+const startBlock = 0
+const blockCount = 128
+
 var (
 	debug = false
 
@@ -78,10 +81,15 @@ func RunFor(dev *flash.Device) {
 	println("SPI Configured. Reading flash info")
 
 	lfsConfig := FlashLFSConfig()
-	lfsConfig.BlockCount = flashdev.Attrs().TotalSize / lfsConfig.BlockSize
+	if blockCount == 0 {
+		lfsConfig.BlockCount = (flashdev.Attrs().TotalSize / lfsConfig.BlockSize) - startBlock
+	} else {
+		lfsConfig.BlockCount = blockCount
+	}
+	println("Start block:", startBlock)
 	println("Block count:", lfsConfig.BlockCount)
 
-	blockdev = NewFlashBlockDevice(lfsConfig, flashdev)
+	blockdev = NewFlashBlockDevice(lfsConfig, flashdev, startBlock)
 	fs = lfs.New(lfsConfig, blockdev)
 
 	prompt()
@@ -356,7 +364,7 @@ func write(argv []string) {
 		println("Trying receive to " + tgt)
 	}
 	buf := make([]byte, 1)
-	f, err := fs.OpenFile(tgt, lfs.O_CREAT|lfs.O_WRONLY|lfs.O_TRUNC)
+	f, err := fs.OpenFile(tgt, os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
 	if err != nil {
 		fmt.Printf("error opening %s: %s\r\n", tgt, err.Error())
 		return
@@ -390,7 +398,7 @@ func createSampleFile(name string, buf []byte) (int, error) {
 	for j := uint8(0); j < uint8(len(buf)); j++ {
 		buf[j] = 0x20 + j
 	}
-	f, err := fs.OpenFile(name, lfs.O_CREAT|lfs.O_WRONLY|lfs.O_TRUNC)
+	f, err := fs.OpenFile(name, os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
 	if err != nil {
 		return 0, fmt.Errorf("error opening %s: %s", name, err.Error())
 	}

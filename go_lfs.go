@@ -274,8 +274,6 @@ type File struct {
 	lfs  *LFS
 	typ  fileType
 	hndl unsafe.Pointer
-	//fptr C.struct_lfs_file
-	//dptr *C.struct_lfs_dir
 	name string
 }
 
