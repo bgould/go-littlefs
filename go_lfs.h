@@ -26,6 +26,7 @@ int go_lfs_c_cb_sync(const struct lfs_config *c);
 struct lfs* go_lfs_new_lfs(void);
 struct lfs_config* go_lfs_new_lfs_config(void);
 lfs_dir_t* go_lfs_new_lfs_dir(void);
+lfs_file_t* go_lfs_new_lfs_file(void);
 
 // Helper function to set the function pointers to the global callbacks on a
 // provided LFS config struct

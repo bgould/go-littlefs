@@ -212,21 +212,36 @@ func (l *LFS) Open(path string) (*File, error) {
 }
 
 func (l *LFS) OpenFile(path string, flags OpenFlag) (*File, error) {
+
 	cs := cstring(path)
 	defer C.free(unsafe.Pointer(cs))
 	file := &File{lfs: l, name: path}
-	errno := C.lfs_file_open(l.lfs, &file.fptr, cs, C.int(flags))
-	if Error(errno) == ErrIsDir {
-		file.dptr = C.go_lfs_new_lfs_dir()
-		errno = C.lfs_dir_open(l.lfs, file.dptr, cs)
+
+	var fileType FileType
+	info := C.struct_lfs_info{}
+	if err := errval(C.lfs_stat(l.lfs, cs, &info)); err == nil {
+		fileType = FileType(info._type)
 	}
-	err := errval(errno)
-	if err != nil {
-		if file.dptr != nil {
-			C.free(unsafe.Pointer(file.dptr))
+
+	var errno C.int
+	if fileType == FileTypeDir {
+		file.typ = FileTypeDir
+		file.hndl = unsafe.Pointer(C.go_lfs_new_lfs_dir())
+		errno = C.lfs_dir_open(l.lfs, file.dirptr(), cs)
+	} else {
+		file.typ = FileTypeReg
+		file.hndl = unsafe.Pointer(C.go_lfs_new_lfs_file())
+		errno = C.lfs_file_open(l.lfs, file.fileptr(), cs, C.int(flags))
+	}
+
+	if err := errval(errno); err != nil {
+		if file.hndl != nil {
+			C.free(file.hndl)
+			file.hndl = nil
 		}
 		return nil, err
 	}
+
 	return file, nil
 }
 
@@ -246,9 +261,19 @@ func (l *LFS) Size() (n int, err error) {
 
 type File struct {
 	lfs  *LFS
-	fptr C.struct_lfs_file
-	dptr *C.struct_lfs_dir
+	typ  FileType
+	hndl unsafe.Pointer
+	//fptr C.struct_lfs_file
+	//dptr *C.struct_lfs_dir
 	name string
+}
+
+func (f *File) dirptr() *C.struct_lfs_dir {
+	return (*C.struct_lfs_dir)(f.hndl)
+}
+
+func (f *File) fileptr() *C.struct_lfs_file {
+	return (*C.struct_lfs_file)(f.hndl)
 }
 
 // Name returns the name of the file as presented to OpenFile
@@ -256,29 +281,33 @@ func (f *File) Name() string {
 	return f.name
 }
 
-// Close a file
-//
-// Any pending writes are written out to storage as though
-// sync had been called and releases any allocated resources.
-//
-// Returns a negative error code on failure.
+// Close the file; any pending writes are written out to storage
 func (f *File) Close() error {
-	if f.dptr != nil {
+	if f.hndl != nil {
 		defer func() {
-			C.free(unsafe.Pointer(f.dptr))
-			f.dptr = nil
+			C.free(f.hndl)
+			f.hndl = nil
 		}()
-		return errval(C.lfs_dir_close(f.lfs.lfs, f.dptr))
+		switch f.typ {
+		case FileTypeReg:
+			return errval(C.lfs_file_close(f.lfs.lfs, f.fileptr()))
+		case FileTypeDir:
+			return errval(C.lfs_dir_close(f.lfs.lfs, f.dirptr()))
+		default:
+			panic("lfs: unknown typ for file handle")
+		}
 	}
-	return errval(C.lfs_file_close(f.lfs.lfs, &f.fptr))
+	return nil
 }
 
 func (f *File) Read(buf []byte) (n int, err error) {
-	cbuf := C.malloc(C.size_t(len(buf)))
-	defer C.free(cbuf)
-	errno := C.int(C.lfs_file_read(f.lfs.lfs, &f.fptr, cbuf, C.lfs_size_t(len(buf))))
+	if f.IsDir() {
+		return 0, ErrIsDir
+	}
+	bufptr := unsafe.Pointer(&buf[0])
+	buflen := C.lfs_size_t(len(buf))
+	errno := C.int(C.lfs_file_read(f.lfs.lfs, f.fileptr(), bufptr, buflen))
 	if errno > 0 {
-		copy(buf, (*[1 << 28]byte)(cbuf)[:len(buf):len(buf)])
 		return int(errno), nil
 	} else if errno == 0 {
 		// TODO: any extra checks needed here?
@@ -290,7 +319,7 @@ func (f *File) Read(buf []byte) (n int, err error) {
 
 // Seek changes the position of the file
 func (f *File) Seek(offset int64, whence int) (ret int64, err error) {
-	errno := C.int(C.lfs_file_seek(f.lfs.lfs, &f.fptr, C.lfs_soff_t(offset), C.int(whence)))
+	errno := C.int(C.lfs_file_seek(f.lfs.lfs, f.fileptr(), C.lfs_soff_t(offset), C.int(whence)))
 	if errno < 0 {
 		return -1, errval(errno)
 	}
@@ -299,7 +328,7 @@ func (f *File) Seek(offset int64, whence int) (ret int64, err error) {
 
 // Tell returns the position of the file
 func (f *File) Tell() (ret int64, err error) {
-	errno := C.int(C.lfs_file_tell(f.lfs.lfs, &f.fptr))
+	errno := C.int(C.lfs_file_tell(f.lfs.lfs, f.fileptr()))
 	if errno < 0 {
 		return -1, errval(errno)
 	}
@@ -308,38 +337,32 @@ func (f *File) Tell() (ret int64, err error) {
 
 // Rewind changes the position of the file to the beginning of the file
 func (f *File) Rewind() (err error) {
-	return errval(C.lfs_file_rewind(f.lfs.lfs, &f.fptr))
+	return errval(C.lfs_file_rewind(f.lfs.lfs, f.fileptr()))
 }
 
 // Size returns the size of the file
 func (f *File) Size() (int64, error) {
-	errno := C.int(C.lfs_file_size(f.lfs.lfs, &f.fptr))
+	errno := C.int(C.lfs_file_size(f.lfs.lfs, f.fileptr()))
 	if errno < 0 {
 		return -1, errval(errno)
 	}
 	return int64(errno), nil
 }
 
-// Synchronize a file on storage
-//
-// Any pending writes are written out to storage.
-// Returns a negative error code on failure.
+// Sync synchronizes to storage so that any pending writes are written out.
 func (f *File) Sync() error {
-	return errval(C.lfs_file_sync(f.lfs.lfs, &f.fptr))
+	return errval(C.lfs_file_sync(f.lfs.lfs, f.fileptr()))
 }
 
-// Truncates the size of the file to the specified size
-//
-// Returns a negative error code on failure.
+// Truncate the size of the file to the specified size
 func (f *File) Truncate(size uint32) error {
-	return errval(C.lfs_file_truncate(f.lfs.lfs, &f.fptr, C.lfs_off_t(size)))
+	return errval(C.lfs_file_truncate(f.lfs.lfs, f.fileptr(), C.lfs_off_t(size)))
 }
 
 func (f *File) Write(buf []byte) (n int, err error) {
-	cbuf := C.malloc(C.size_t(len(buf)))
-	defer C.free(cbuf)
-	copy((*[1 << 28]byte)(cbuf)[:len(buf):len(buf)], buf)
-	errno := C.lfs_file_write(f.lfs.lfs, &f.fptr, cbuf, C.lfs_size_t(len(buf)))
+	bufptr := unsafe.Pointer(&buf[0])
+	buflen := C.lfs_size_t(len(buf))
+	errno := C.lfs_file_write(f.lfs.lfs, f.fileptr(), bufptr, buflen)
 	if errno > 0 {
 		return int(errno), nil
 	} else {
@@ -348,7 +371,7 @@ func (f *File) Write(buf []byte) (n int, err error) {
 }
 
 func (f *File) IsDir() bool {
-	return f.dptr != nil
+	return f.typ == FileTypeDir
 }
 
 func (f *File) Readdir(n int) (infos []os.FileInfo, err error) {
@@ -360,7 +383,7 @@ func (f *File) Readdir(n int) (infos []os.FileInfo, err error) {
 	}
 	for {
 		var info C.struct_lfs_info
-		i := C.lfs_dir_read(f.lfs.lfs, f.dptr, &info)
+		i := C.lfs_dir_read(f.lfs.lfs, f.dirptr(), &info)
 		if i == 0 {
 			return
 		}
